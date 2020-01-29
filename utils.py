@@ -9,6 +9,10 @@ import os
 import hashlib
 import zipfile
 from six.moves import urllib
+import datetime
+import glob
+from pathlib import Path
+import numpy as np
 
 
 def readlines(filename):
@@ -46,6 +50,39 @@ def sec_to_hm_str(t):
     """
     h, m, s = sec_to_hm(t)
     return "{:02d}h{:02d}m{:02d}s".format(h, m, s)
+
+
+def timestamp_to_datetime_float(timestamp):
+    return datetime.datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S.%f').timestamp()
+
+
+def get_timestamps(path):
+    lines = readlines(path)
+    timestamps = np.array([timestamp_to_datetime_float(line) for line in lines])
+    assert(np.all(timestamps[:-1] <= timestamps[1:]))
+    return timestamps
+
+
+def get_imu_data(path):
+    files = glob.glob(os.path.join(path, "*.txt"))
+    data = {}
+    for file in files:
+        contents = readlines(file)[0].split(" ")
+        accelerations = contents[11:14]
+        ang_velocity = contents[17:20]
+        accelerations = [float(a) for a in accelerations]
+        ang_velocity = [float(a) for a in ang_velocity]
+
+        index = int(Path(file).stem)
+        data[index] = (accelerations, ang_velocity)
+    
+    acc_list = []
+    ang_vel_list = []
+    for i in range(len(data.items())):
+        assert(i in data.keys())
+        acc_list.append(data[i][0])
+        ang_vel_list.append(data[i][1])
+    return acc_list, ang_vel_list
 
 
 def download_model_if_doesnt_exist(model_name):

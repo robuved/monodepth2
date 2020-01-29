@@ -132,6 +132,23 @@ class MonodepthOptions:
                                  help="normal or shared",
                                  default="separate_resnet",
                                  choices=["posecnn", "separate_resnet", "shared"])
+        self.parser.add_argument("--use_imu",
+                                 help="if set, include IMU measurements in pose prediction",
+                                 action="store_true")
+
+        # LSTM options
+        self.parser.add_argument("--lstm_num_layers",
+                                 type=int,
+                                 help="number of LSTM layers",
+                                 default=2)
+        self.parser.add_argument("--lstm_hidden_size",
+                                 type=int,
+                                 help="size of hidden state",
+                                 default=32)
+        self.parser.add_argument("--pose_mlp_hidden_size",
+                                 type=int,
+                                 help="size of hidden state",
+                                 default=32)
 
         # SYSTEM options
         self.parser.add_argument("--no_cuda",

@@ -13,6 +13,9 @@ import PIL.Image as pil
 
 from kitti_utils import generate_depth_map
 from .mono_dataset import MonoDataset
+from utils import get_timestamps, get_imu_data
+import numpy as np
+import torch
 
 
 class KITTIDataset(MonoDataset):
@@ -49,18 +52,51 @@ class KITTIDataset(MonoDataset):
 
         return color
 
-
 class KITTIRAWDataset(KITTIDataset):
     """KITTI dataset which loads the original velodyne depth maps for ground truth
     """
     def __init__(self, *args, **kwargs):
         super(KITTIRAWDataset, self).__init__(*args, **kwargs)
+        self.timestamp_file_contents = {}
+        self.imu_contents = {}
 
     def get_image_path(self, folder, frame_index, side):
         f_str = "{:010d}{}".format(frame_index, self.img_ext)
         image_path = os.path.join(
             self.data_path, folder, "image_0{}/data".format(self.side_map[side]), f_str)
         return image_path
+    
+    def get_timestamp(self, folder, frame_index, side):
+        timestamp_path = os.path.join(
+            self.data_path, folder, "image_0{}/timestamps.txt".format(self.side_map[side]))
+        if timestamp_path not in self.timestamp_file_contents:
+            self.timestamp_file_contents[timestamp_path] = get_timestamps(timestamp_path)
+        return self.timestamp_file_contents[timestamp_path][frame_index]
+
+    def get_imu_measurements(self, folder, start, end):
+        timestamp_path = os.path.join(
+            self.data_path, folder, "oxts", "timestamps.txt")
+        if timestamp_path not in self.timestamp_file_contents:
+            self.timestamp_file_contents[timestamp_path] = get_timestamps(timestamp_path)
+        timestamps = self.timestamp_file_contents[timestamp_path]
+
+        imu_data_path = os.path.join(
+            self.data_path, folder, "oxts", "data")
+        if imu_data_path not in self.imu_contents:
+            acc, gyro = get_imu_data(imu_data_path)
+            self.imu_contents[imu_data_path] = (torch.tensor(acc), torch.tensor(gyro))
+        acc, gyro = self.imu_contents[imu_data_path]
+
+        start_index = np.searchsorted(timestamps, start, side='right') - 1
+        if start_index < 0:
+            start_index = 0
+        end_index = np.searchsorted(timestamps, end, side='right')
+        if end_index < 0:
+            end_index = 0
+    
+        return timestamps[start_index:end_index + 1], \
+            acc[start_index: end_index + 1], \
+            gyro[start_index: end_index + 1]
 
     def get_depth(self, folder, frame_index, side, do_flip):
         calib_path = os.path.join(self.data_path, folder.split("/")[0])

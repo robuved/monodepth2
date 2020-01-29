@@ -45,6 +45,31 @@ def transformation_from_parameters(axisangle, translation, invert=False):
     return M
 
 
+def transformation_from_matrix(rotation, translation, invert=False):
+    R = rotation.clone()
+    t = translation.clone()
+
+    if invert:
+        R = R.transpose(1, 2)
+        t *= -1
+
+    T = get_translation_matrix(t)
+
+    if invert:
+        M = torch.matmul(R, T)
+    else:
+        M = torch.matmul(T, R)
+
+    return M
+
+
+def rot_translation_from_transformation(transformation):
+    R = transformation[:, :3, :3]
+    t = transformation[:, :3, 3]
+    t = torch.matmul(R.transpose(1, 2), t)
+    return R, t
+
+
 def get_translation_matrix(translation_vector):
     """Convert a translation vector into a 4x4 transformation matrix
     """
@@ -56,11 +81,13 @@ def get_translation_matrix(translation_vector):
     T[:, 1, 1] = 1
     T[:, 2, 2] = 1
     T[:, 3, 3] = 1
+    print(T.shape)
     T[:, :3, 3, None] = t
+    print(T.shape)
 
     return T
 
-
+    
 def rot_from_axisangle(vec):
     """Convert an axisangle rotation into a 4x4 transformation matrix
     (adapted from https://github.com/Wallacoloo/printipi)

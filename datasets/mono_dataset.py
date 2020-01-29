@@ -139,8 +139,11 @@ class MonoDataset(data.Dataset):
 
         do_color_aug = self.is_train and random.random() > 0.5
         do_flip = self.is_train and random.random() > 0.5
+        
+        # would mess with the IMU measurements
+        do_flip = False
 
-        line = self.filenames[index].split()
+        line = self.filenames[index].()
         folder = line[0]
 
         if len(line) == 3:
@@ -153,12 +156,21 @@ class MonoDataset(data.Dataset):
         else:
             side = None
 
+        timestamps = []
         for i in self.frame_idxs:
             if i == "s":
                 other_side = {"r": "l", "l": "r"}[side]
                 inputs[("color", i, -1)] = self.get_color(folder, frame_index, other_side, do_flip)
             else:
                 inputs[("color", i, -1)] = self.get_color(folder, frame_index + i, side, do_flip)
+            inputs[("timestamp", i)] = self.get_timestamp(folder, frame_index + i, side)
+            timestamps.append(inputs[('timestamps', i)])
+        
+        ts, acc, angular_velocity = \
+            self.get_imu_measurements(min(timestamps), max(timestamps))
+
+        inputs[("imu", "timestamps")] = ts
+        inputs[("imu", "measurements")] = torch.stack(acc, angular_velocity, dim=0)
 
         # adjusting intrinsics to match each scale in the pyramid
         for scale in range(self.num_scales):
@@ -196,7 +208,7 @@ class MonoDataset(data.Dataset):
             stereo_T[0, 3] = side_sign * baseline_sign * 0.1
 
             inputs["stereo_T"] = torch.from_numpy(stereo_T)
-
+        
         return inputs
 
     def get_color(self, folder, frame_index, side, do_flip):
@@ -206,4 +218,10 @@ class MonoDataset(data.Dataset):
         raise NotImplementedError
 
     def get_depth(self, folder, frame_index, side, do_flip):
+        raise NotImplementedError
+
+    def get_timestamp(self, folder, frame_index, side):
+        raise NotImplementedError
+
+    def get_imu_measurements(self, folder, start_timestamp, end_timestamp):
         raise NotImplementedError

@@ -11,6 +11,7 @@ import time
 
 import torch
 import torch.nn.functional as F
+import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
@@ -98,6 +99,17 @@ class Trainer:
                 num_output_channels=(len(self.opt.frame_ids) - 1))
             self.models["predictive_mask"].to(self.device)
             self.parameters_to_train += list(self.models["predictive_mask"].parameters())
+
+        if self.opt.use_imu:
+            self.models["imu_lstm"] = nn.LSTM(6, self.opt.lstm_hidden_size, self.opt.lstm_num_layers).to(self.device)
+            self.models["hidden_to_imu"] = torch.nn.Sequential(
+                torch.nn.Linear(self.opt.lstm_hidden_size, 6),
+                # torch.nn.Sigmoid(),
+                # torch.nn.Linear(self.opt.pose_mlp_hidden_size, self.opt.pose_mlp_hidden_size),
+                # torch.nn.Sigmoid(),
+                # torch.nn.Linear(self.opt.pose_mlp_hidden_size, 6),
+            ).to(self.device)
+            self.eye_buffer = (torch.unsqueeze(torch.eye(3), axis=0)).repeat(self.opt.batch_size, 1, 1)
 
         self.model_optimizer = optim.Adam(self.parameters_to_train, self.opt.learning_rate)
         self.model_lr_scheduler = optim.lr_scheduler.StepLR(
@@ -254,6 +266,10 @@ class Trainer:
         if self.use_pose_net:
             outputs.update(self.predict_poses(inputs, features))
 
+        # Add imu
+        if self.opt.use_imu:
+            outputs.update(self.predict_poses_from_imu(inputs))
+
         self.generate_images_pred(inputs, outputs)
         losses = self.compute_losses(inputs, outputs)
 
@@ -317,6 +333,76 @@ class Trainer:
 
         return outputs
 
+    def predict_poses_from_imu(self, inputs):
+        # get relative poses ordered
+        sorted_frame_ids = sorted(self.opt.frame_ids)
+
+        # propagate IMU data though LSTM and mapping linear layer + add input
+        imu_timestamps = inputs[("imu", "timestamps")]
+        imu_measurements = inputs[("imu", "measurements")]
+        imu_features = self.models["imu_lstm"](inputs[("imu", "measurements")])
+        imu_corrected = imu_measurements + self.models["hidden_to_imu"]
+        # BATCH size X SEQUENCE length X 6
+        imu_index = 0
+
+        cam_T_cam = {}
+        
+        for f_id1, f_id2 in zip(sorted_frame_ids[:-1], sorted_frame_ids[1:]):
+            ts1 = inputs[("timestamp", f_id1)]
+            ts2 = inputs[("timestamp", f_id2)]   
+
+            cum_rotation = None
+            cum_pos = None
+            cum_vel = None             
+            for ts, imu_index in enumerate(imu_timestamps):
+                if not (ts1 <= ts <= ts2):
+                    continue
+
+                prev_ts = ts1
+                if imu_index - 1 >= 0 and imu_timestamps[imu_index - 1] > ts1:
+                    prev_ts = imu_timestamps[imu_index - 1]
+
+                current_ts = ts
+                if ts < ts2 and (imu_index + 1 < len(imu_timestamps) and 
+                        imu_timestamps[imu_index + 1] > ts2):
+                    current_ts = ts2
+                
+                dt = current_ts - prev_ts
+
+                c_gyro = imu_corrected[:, imu_index, 3:6] * dt
+                rotations = rot_from_axisangle(c_gyro)[:, :3, :3]
+                if cum_rotation is None:
+                    cum_rotation = rotations
+                else:
+                    cum_rotation = torch.matmul(cum_rotation, rotations)
+
+                c_acc = imu_corrected[:, imu_index, :3]
+                global_acc = torch.matmul(cum_rotation, c_acc)
+                if cum_pos is None:
+                    cum_vel = torch.zeros_like(global_acc)
+                    cum_pos = torch.zeros_like(global_acc)
+                else:
+                    cum_vel = cum_vel + global_acc * dt
+                    cum_pos = cum_pos + cum_vel *  dt + 0.5 * global_acc * dt ** 2 
+
+            cam_T_cam[(f_id1, f_id2)] = (cum_rotation, cum_pos)
+
+        # compose IMU to get relative poses
+        outputs = {}
+        for f_id in self.opt.frame_ids[1:]:
+
+            to_compose = range(0, f_id) if f_id > 0 else range(f_id , 0)
+            reverse = f_id < 0
+
+            T = None
+            for f_id_int in to_compose:
+                c_T = transformation_from_matrix(*cam_T_cam[(f_id_int, f_id_int + 1)], invert=reverse)
+                if T is None:
+                    T = c_T
+                else:
+                    T = torch.matmul(T, c_T) if not reverse else torch.mult(c_T, T)
+            outputs[("cam_T_cam_imu", 0, f_id)] = T
+
     def val(self):
         """Validate the model on a single minibatch
         """
@@ -359,6 +445,8 @@ class Trainer:
 
                 if frame_id == "s":
                     T = inputs["stereo_T"]
+                elif self.opt.use_imu:
+                    T = outputs[("cam_T_cam_imu", 0, frame_id)]
                 else:
                     T = outputs[("cam_T_cam", 0, frame_id)]
 
@@ -490,9 +578,25 @@ class Trainer:
             loss += self.opt.disparity_smoothness * smooth_loss / (2 ** scale)
             total_loss += loss
             losses["loss/{}".format(scale)] = loss
-
+            
         total_loss /= self.num_scales
+        losses["image_loss"] = total_loss
         losses["loss"] = total_loss
+        if self.opt.use_imu:
+            imu_loss = 0
+
+            for f_id in self.opt.frame_ids[1:]:
+                R_imu, t_imu = rot_translation_from_transformation(outputs[("cam_T_cam_imu", 0, f_id)])
+                R, t = rot_translation_from_transformation(outputs[("cam_T_cam", 0, f_id)])
+                
+                # rot_error = torch.matmul(R.transpose(1, 2), R_imu)
+                # rot_loss = F.mse_loss(rot_error, self.eye_buffer)
+                rot_loss = F.mse_loss(R, R_imu)
+                translation_loss = torch.mean(torch.sum(t_imu * t, dim=-1))
+                imu_loss = rot_loss + translation_loss
+
+            losses["imu_loss"] = imu_loss / (self.opt.frame_ids - 1)
+            losses["loss"] += losses["imu_loss"]
         return losses
 
     def compute_depth_losses(self, inputs, outputs, losses):
@@ -515,8 +619,8 @@ class Trainer:
         mask = mask * crop_mask
 
         depth_gt = depth_gt[mask]
-        depth_pred = depth_pred[mask]
-        depth_pred *= torch.median(depth_gt) / torch.median(depth_pred)
+        depth_pred_original = depth_pred[mask]
+        depth_pred *= torch.median(depth_gt) / torch.median(depth_pred_original)
 
         depth_pred = torch.clamp(depth_pred, min=1e-3, max=80)
 
@@ -524,6 +628,14 @@ class Trainer:
 
         for i, metric in enumerate(self.depth_metric_names):
             losses[metric] = np.array(depth_errors[i].cpu())
+
+        if self.opt.use_imu:
+            depth_pred = torch.clamp(depth_pred_original, min=1e-3, max=80)
+
+            depth_errors = compute_depth_errors(depth_gt, depth_pred)
+
+            for i, metric in enumerate(self.depth_metric_names):
+                losses[metric + "unscaled"] = np.array(depth_errors[i].cpu())
 
     def log_time(self, batch_idx, duration, loss):
         """Print a logging statement to the terminal
