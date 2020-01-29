@@ -26,7 +26,7 @@ for path in videos:
     frame_counts.append(number_frames)
 
 frame_counts = np.array(frame_counts)
-
+print('Sorted lengths', np.sort(frame_counts))
 # for full: 0 and small: 2
 np.random.seed(0)
 
@@ -37,7 +37,7 @@ split = {
 }
 
 for left_range, right_range, train_count, validation_count, test_count in  \
-        [(0, 300, -1, 0, 0), (300, 1000, -1, 2, 2), (1000, 4000, -1, 2, 2), (4000, 5000, -1, 1, 1), (5000, 10000, -1, 0, 0)]:
+        [(0, 300, -1, 0, 0), (300, 1000, -1, 3, 3), (1000, 2600, -1, 2, 2), (2600, 10000, -1, 0, 0)]:
 # for left_range, right_range, train_count, validation_count, test_count in  \
 #         [(0, 300, 3, 1, 1), (300, 1000, 0, 0, 0), (1000, 4000, 0, 0, 0), (4000, 5000, 0, 0, 0), (5000, 10000, 0, 0, 0)]:
      
