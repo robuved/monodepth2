@@ -102,6 +102,7 @@ class Trainer:
 
         if self.opt.use_imu:
             self.models["imu_lstm"] = nn.LSTM(6, self.opt.lstm_hidden_size, self.opt.lstm_num_layers).to(self.device)
+            self.lstm_hn, self.lstm_cn = None, None
             self.models["hidden_to_imu"] = torch.nn.Sequential(
                 torch.nn.Linear(self.opt.lstm_hidden_size, 6),
                 # torch.nn.Sigmoid(),
@@ -340,8 +341,8 @@ class Trainer:
         # propagate IMU data though LSTM and mapping linear layer + add input
         imu_timestamps = inputs[("imu", "timestamps")]
         imu_measurements = inputs[("imu", "measurements")]
-        imu_features = self.models["imu_lstm"](inputs[("imu", "measurements")])
-        imu_corrected = imu_measurements + self.models["hidden_to_imu"]
+        imu_features, self.lstm_hn, self.lstm_cn = self.models["imu_lstm"](imu_measurements, self.lstm_hn, self.lstm_cn)
+        imu_corrected = imu_measurements + self.models["hidden_to_imu"](imu_features)
         # BATCH size X SEQUENCE length X 6
         imu_index = 0
 
