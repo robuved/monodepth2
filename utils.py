@@ -53,7 +53,7 @@ def sec_to_hm_str(t):
 
 
 def timestamp_to_datetime_float(timestamp):
-    return datetime.datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S.%f').timestamp()
+    return datetime.datetime.strptime(timestamp[:-4], '%Y-%m-%d %H:%M:%S.%f').timestamp()
 
 
 def get_timestamps(path):

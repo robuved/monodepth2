@@ -81,9 +81,7 @@ def get_translation_matrix(translation_vector):
     T[:, 1, 1] = 1
     T[:, 2, 2] = 1
     T[:, 3, 3] = 1
-    print(T.shape)
     T[:, :3, 3, None] = t
-    print(T.shape)
 
     return T
 

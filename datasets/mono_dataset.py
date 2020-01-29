@@ -143,7 +143,7 @@ class MonoDataset(data.Dataset):
         # would mess with the IMU measurements
         do_flip = False
 
-        line = self.filenames[index].()
+        line = self.filenames[index].split()
         folder = line[0]
 
         if len(line) == 3:
@@ -164,13 +164,13 @@ class MonoDataset(data.Dataset):
             else:
                 inputs[("color", i, -1)] = self.get_color(folder, frame_index + i, side, do_flip)
             inputs[("timestamp", i)] = self.get_timestamp(folder, frame_index + i, side)
-            timestamps.append(inputs[('timestamps', i)])
+            timestamps.append(inputs[('timestamp', i)])
         
         ts, acc, angular_velocity = \
-            self.get_imu_measurements(min(timestamps), max(timestamps))
+            self.get_imu_measurements(folder, min(timestamps), max(timestamps))
 
         inputs[("imu", "timestamps")] = ts
-        inputs[("imu", "measurements")] = torch.stack(acc, angular_velocity, dim=0)
+        inputs[("imu", "measurements")] = torch.cat((acc, angular_velocity), dim=0)
 
         # adjusting intrinsics to match each scale in the pyramid
         for scale in range(self.num_scales):

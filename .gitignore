@@ -4,4 +4,7 @@ __pycache__
 *_disp.npy
 *.npz
 kitti_data
+kitti_data_unsynced
+kitti_odom
 models
+experiments/tensorboard
