@@ -117,8 +117,8 @@ class Trainer:
                 self.models["pose_fuse_mlp"] = torch.nn.Sequential(
                     torch.nn.Linear(24, self.opt.pose_mlp_hidden_size),
                     torch.nn.Sigmoid(),
-                    torch.nn.Linear(self.opt.pose_mlp_hidden_size, self.opt.pose_mlp_hidden_size),
-                    torch.nn.Sigmoid(),
+                    # torch.nn.Linear(self.opt.pose_mlp_hidden_size, self.opt.pose_mlp_hidden_size),
+                    # torch.nn.Sigmoid(),
                     torch.nn.Linear(self.opt.pose_mlp_hidden_size, 6),
                 ).to(self.device)
                 self.parameters_to_train += list(self.models["pose_fuse_mlp"].parameters())
