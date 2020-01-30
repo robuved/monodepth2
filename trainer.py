@@ -110,8 +110,8 @@ class Trainer:
                 # torch.nn.Sigmoid(),
                 # torch.nn.Linear(self.opt.pose_mlp_hidden_size, 6),
             ).to(self.device)
-            if self.opt_pose_fuse:
-                self.models["pose_fuse"] = torch.nn.Sequential(
+            if self.opt.pose_fuse:
+                self.models["pose_fuse_mlp"] = torch.nn.Sequential(
                     torch.nn.Linear(24, self.opt.pose_mlp_hidden_size),
                     torch.nn.Sigmoid(),
                     torch.nn.Linear(self.opt.pose_mlp_hidden_size, self.opt.pose_mlp_hidden_size),
@@ -449,7 +449,19 @@ class Trainer:
         return outputs
      
     def fuse_poses(self, outputs):
-        
+        def transformation_to_tensor(tr_batch):
+            R, t = rot_translation_from_transformation(tr_batch)
+            return torch.cat([R.reshape(-1, 9), t.reshape(-1, 3)], dim=1)
+
+        for f_id in self.opt.frame_ids[1:]:
+            pose_net = transformation_to_tensor(outputs[("cam_T_cam", 0, f_id)])
+            pose_imu = transformation_to_tensor(outputs[("cam_T_cam_imu", 0, f_id)])
+            pose_fuse_input = torch.cat([pose_net, pose_imu], dim=1)
+            pose_fuse_output = self.models['pose_fuse_mlp'](pose_fuse_input)
+            rot = pose_fuse_output[:, 9].reshape(-1, 3, 3)
+            tr = pose_fuse_output[:, 9:12].reshape(-1, 3, 1)
+            outputs[("cam_T_cam_fuse", 0, f_id)] = transformation_from_matrix(rot, tr)
+
     def predict_poses_from_imu(self, inputs):
         # get relative poses ordered
         sorted_frame_ids = sorted(self.opt.frame_ids)
@@ -565,9 +577,10 @@ class Trainer:
                 if frame_id == "s":
                     T = inputs["stereo_T"]
                 elif self.opt.use_imu:
-                    T = outputs[("cam_T_cam_imu", 0, frame_id)]
-                else:
-                    T = outputs[("cam_T_cam", 0, frame_id)]
+                    if self.opt.pose_fuse:
+                        T = outputs[("cam_T_cam_fuse", 0, frame_id)]
+                    else:
+                        T = outputs[("cam_T_cam_imu", 0, frame_id)]
 
                 # from the authors of https://arxiv.org/abs/1712.00175
                 if self.opt.pose_model_type == "posecnn":
