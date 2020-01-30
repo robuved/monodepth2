@@ -80,11 +80,20 @@ def evaluate(opt):
 
         encoder_dict = torch.load(encoder_path)
 
-        dataset = datasets.KITTIRAWDataset(opt.data_path, filenames,
-                                           encoder_dict['height'], encoder_dict['width'],
-                                           [0], 4, is_train=False)
-        dataloader = DataLoader(dataset, 16, shuffle=False, num_workers=opt.num_workers,
-                                pin_memory=True, drop_last=False)
+        if not opt.use_imu:
+            dataset = datasets.KITTIRAWDataset(opt.data_path, filenames,
+                                               encoder_dict['height'], encoder_dict['width'],
+                                               [0], 4, is_train=False)
+            dataloader = DataLoader(dataset, 16, shuffle=False, num_workers=opt.num_workers,
+                                    pin_memory=True, drop_last=False)
+        else:
+            img_ext = '.png' if opt.png else '.jpg'
+            videonames = readlines(os.path.join(splits_dir, opt.eval_split, "test_video_list.txt"))
+            dataset = datasets.SequenceRawKittiDataset(opt.opt.data_path, videonames, filenames,
+                                                        1, [0, -1],
+                                                             height=self.opt.height, width=self.opt.width,
+                                                             num_scales=4, is_train=True)
+            self.train_loader = DataLoader(train_dataset)
 
         encoder = networks.ResnetEncoder(opt.num_layers, False)
         depth_decoder = networks.DepthDecoder(encoder.num_ch_enc)
