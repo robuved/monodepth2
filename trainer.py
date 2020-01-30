@@ -110,6 +110,14 @@ class Trainer:
                 # torch.nn.Sigmoid(),
                 # torch.nn.Linear(self.opt.pose_mlp_hidden_size, 6),
             ).to(self.device)
+            if self.opt_pose_fuse:
+                self.models["pose_fuse"] = torch.nn.Sequential(
+                    torch.nn.Linear(24, self.opt.pose_mlp_hidden_size),
+                    torch.nn.Sigmoid(),
+                    torch.nn.Linear(self.opt.pose_mlp_hidden_size, self.opt.pose_mlp_hidden_size),
+                    torch.nn.Sigmoid(),
+                    torch.nn.Linear(self.opt.pose_mlp_hidden_size, 16),
+                ).to(self.device)
 
         self.model_optimizer = optim.Adam(self.parameters_to_train, self.opt.learning_rate)
         self.model_lr_scheduler = optim.lr_scheduler.StepLR(
@@ -287,13 +295,16 @@ class Trainer:
 
         # Add imu
         if self.opt.use_imu:
-            outputs.update(self.predict_poses_from_imu(inputs))
+            outputs.update(self.predict_poses_from_imu2(inputs))
+        
+        if self.opt.pose_fuse:
+            outputs.update(self.fuse_poses(outputs))
 
         self.generate_images_pred(inputs, outputs)
         losses = self.compute_losses(inputs, outputs)
 
         return outputs, losses
-
+    
     def predict_poses(self, inputs, features):
         """Predict poses between input frames for monocular sequences.
         """
@@ -436,7 +447,9 @@ class Trainer:
             outputs[("cam_T_cam_imu", 0, f_id)] = T
 
         return outputs
-
+     
+    def fuse_poses(self, outputs):
+        
     def predict_poses_from_imu(self, inputs):
         # get relative poses ordered
         sorted_frame_ids = sorted(self.opt.frame_ids)
