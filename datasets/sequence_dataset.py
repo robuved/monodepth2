@@ -42,7 +42,7 @@ class SequenceRawKittiDataset(data.IterableDataset):
 
     def get_data_loader(self, path):
         if path not in self.data_loader:
-            self.data_loader[path] = iter(DataLoader(self.video_ds[path], num_workers=0))
+            self.data_loader[path] = iter(DataLoader(self.video_ds[path], num_workers=2))
 
         return self.data_loader[path]
     

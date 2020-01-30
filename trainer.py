@@ -15,7 +15,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
-
+from collections import defaultdict
 import json
 
 from utils import *
@@ -352,6 +352,91 @@ class Trainer:
 
         return outputs
 
+    def predict_poses_from_imu2(self, inputs):
+        # get relative poses ordered
+        sorted_frame_ids = sorted(self.opt.frame_ids)
+
+        # propagate IMU data though LSTM and mapping linear layer + add input
+        imu_timestamps = inputs[("imu", "timestamps")]
+        imu_measurements = inputs[("imu", "measurements")]
+        imu_features, self.lstm_hs = self.models["imu_lstm"](imu_measurements, self.lstm_hs)
+        self.lstm_hs = (self.lstm_hs[0].detach().clone(), self.lstm_hs[0].detach().clone())
+        imu_corrected = imu_measurements + self.models["hidden_to_imu"](imu_features)
+        # BATCH size X SEQUENCE length X 6
+        imu_index = 0
+        
+        cam_T_cam = defaultdict(lambda: [])
+        
+        b_size = inputs[("timestamp", 0)].shape[0]
+        
+        for b_slice in range(b_size):
+            imu_index = 0
+            for f_id1, f_id2 in zip(sorted_frame_ids[:-1], sorted_frame_ids[1:]):
+                ts1 = inputs[("timestamp", f_id1)][b_slice]
+                ts2 = inputs[("timestamp", f_id2)][b_slice]
+
+                cum_rotation = torch.eye(3).repeat(1, 1, 1).to(self.device)
+                cum_pos = torch.zeros(3).to(self.device)
+                cum_vel = torch.zeros(3).to(self.device)
+
+                while imu_index < len(imu_timestamps):
+                    ts = imu_timestamps[imu_index, b_slice, 0]
+                    if ts < 0 or ts > ts1:
+                        break
+                    prev_ts = ts1
+                    if imu_index - 1 >= 0:
+                        prev_ts = torch.max(prev_ts, imu_timestamps[imu_index - 1, b_slice, 0])
+
+                    current_ts = ts
+                    if imu_index + 1 < len(imu_timestamps):
+                        next_ts = imu_timestamps[imu_index + 1, b_slice, 0]
+                        if next_ts > 0 and next_ts > ts2:
+                             current_ts = ts2
+
+                    dt = current_ts - prev_ts
+                    
+
+                    c_gyro = imu_corrected[imu_index, b_slice, 3:6] * dt
+
+                    rotations = rot_from_axisangle(c_gyro[None, None, :])[:, :3, :3]
+          
+                    cum_rotation = torch.matmul(cum_rotation, rotations)
+
+                    c_acc = imu_corrected[imu_index, b_slice, :3]
+
+                    global_acc = torch.matmul(cum_rotation, c_acc[:, None])
+
+                    cum_vel = cum_vel + global_acc[0, 0, :] * dt
+                    cum_pos = cum_pos + cum_vel *  dt + 0.5 * global_acc[0, 0, :] * dt ** 2 
+
+                    imu_index += 1
+
+                cam_T_cam[(f_id1, f_id2)].append((cum_rotation, cum_pos[None, :, None]))
+        
+
+        for k, v in cam_T_cam.items():
+            rots, pos = zip(*v)
+            rots = torch.cat(rots)
+            pos = torch.cat(pos)
+            cam_T_cam[k] = (rots, pos)
+        # compose IMU to get relative poses
+        outputs = {}
+        for f_id in self.opt.frame_ids[1:]:
+
+            to_compose = range(0, f_id) if f_id > 0 else range(f_id , 0)
+            reverse = f_id < 0
+
+            T = None
+            for f_id_int in to_compose:
+                c_T = transformation_from_matrix(*cam_T_cam[(f_id_int, f_id_int + 1)], invert=reverse)
+                if T is None:
+                    T = c_T
+                else:
+                    T = torch.matmul(T, c_T) if not reverse else torch.matmul(c_T, T)
+            outputs[("cam_T_cam_imu", 0, f_id)] = T
+
+        return outputs
+
     def predict_poses_from_imu(self, inputs):
         # get relative poses ordered
         sorted_frame_ids = sorted(self.opt.frame_ids)
@@ -388,6 +473,7 @@ class Trainer:
                 current_ts = torch.min(current_ts, ts2)
                 invalid = torch.min(prev_ts > 0, current_ts > 0)
                 dt = (current_ts - prev_ts) * invalid
+                dt = dt * (dt < 0)
                 dt = dt[:, None]
 
                 c_gyro = imu_corrected[imu_index, :, 3:6] * dt
