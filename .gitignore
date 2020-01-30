@@ -7,4 +7,4 @@ kitti_data
 kitti_data_unsynced
 kitti_odom
 models
-experiments/tensorboard
+./tensorboard

@@ -53,13 +53,71 @@ def sec_to_hm_str(t):
 
 
 def timestamp_to_datetime_float(timestamp):
-    return datetime.datetime.strptime(timestamp[:-4], '%Y-%m-%d %H:%M:%S.%f').timestamp()
+    return datetime.datetime.strptime(timestamp[:-3], '%Y-%m-%d %H:%M:%S.%f').timestamp()
 
 
 def get_timestamps(path):
     lines = readlines(path)
-    timestamps = np.array([timestamp_to_datetime_float(line) for line in lines])
-    assert(np.all(timestamps[:-1] <= timestamps[1:]))
+    timestamps = [timestamp_to_datetime_float(line) for line in lines]
+    
+    ind = 0
+
+    removed = 0
+    while ind < len(timestamps) - 1:
+        if timestamps[ind] <= timestamps[ind + 1]:
+            ind += 1
+            continue
+        
+        bad_index = ind
+        start_back = bad_index
+        upper_limit = timestamps[bad_index + 1]
+        while timestamps[start_back] >= upper_limit and start_back >= 0:
+            start_back -= 1
+        count_to_remove_back = bad_index - start_back
+
+        start_forward = bad_index + 1
+        lower_limit = timestamps[bad_index]
+        while timestamps[start_forward] <= lower_limit:
+            start_forward += 1
+        count_to_remove_forward = start_forward - bad_index
+
+        if count_to_remove_back < count_to_remove_forward:
+            # to_remove.append((start_back + 1, bad_index))
+            # ind += 1
+
+            timestamps = timestamps[:start_back + 1] + timestamps[bad_index + 1:]
+            ind = start_back
+            removed += bad_index - start_back
+            
+        else:
+            # to_remove.append((bad_index + 1, start_forward - 1))
+            # ind = start_forward
+
+            timestamps = timestamps[:bad_index + 1] + timestamps[start_forward:]
+            removed += start_back - bad_index - 1
+    # if len(to_remove):
+    #     print(f"Warning: removing timestamps in {path}")
+    #     total_removed = 0
+    #     for start, end in reversed(to_remove):
+    #         count_removed = end - start + 1
+    #         total_removed += count_removed
+    #         print(f"\t {count_removed}: {start} to {end}; {lines[start]} to {lines[end]}; {timestamps[start]} to {timestamps[end]}")
+    #         timestamps = timestamps[:start] + timestamps[end + 1:]
+    #         lines = lines[:start] + lines[end + 1:]
+    #     print(f"\t\tRemoved: {total_removed}/{len(lines)}")
+    if removed:
+        print(f"Warning: removing timestamps in {path}: {removed}/{len(lines)}")
+
+    timestamps = np.array(timestamps)   
+    for i in range(len(timestamps) - 1):
+        if timestamps[i] > timestamps[i + 1]:
+             print(timestamps[i], timestamps[i + 1])
+    good = timestamps[:-1] <= timestamps[1:]
+    bad = np.logical_not(good)
+    bad_index = np.where(bad)[0]
+    if len(bad_index):
+        print("bad", path, bad_index, lines[bad_index[0]], lines[bad_index[0] + 1], timestamps[bad_index[0]], timestamps[bad_index[0] + 1])
+    assert(np.all(good))
     return timestamps
 
 

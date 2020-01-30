@@ -171,6 +171,7 @@ class MonoDataset(data.Dataset):
 
         inputs[("imu", "timestamps")] = ts
         inputs[("imu", "measurements")] = torch.cat((acc, angular_velocity), dim=0)
+        print('seq len', len(ts))
 
         # adjusting intrinsics to match each scale in the pyramid
         for scale in range(self.num_scales):
