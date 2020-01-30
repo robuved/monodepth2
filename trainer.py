@@ -128,28 +128,46 @@ class Trainer:
                          "kitti_odom": datasets.KITTIOdomDataset}
         self.dataset = datasets_dict[self.opt.dataset]
 
-        fpath = os.path.join(os.path.dirname(__file__), "splits", self.opt.split, "{}_files.txt")
-
-        train_filenames = readlines(fpath.format("train"))
-        val_filenames = readlines(fpath.format("val"))
         img_ext = '.png' if self.opt.png else '.jpg'
 
-        num_train_samples = len(train_filenames)
-        self.num_total_steps = num_train_samples // self.opt.batch_size * self.opt.num_epochs
+        if not self.opt.use_imu:
+            fpath = os.path.join(os.path.dirname(__file__), "splits", self.opt.split, "{}_files.txt")
 
-        train_dataset = self.dataset(
-            self.opt.data_path, train_filenames, self.opt.height, self.opt.width,
-            self.opt.frame_ids, 4, is_train=True, img_ext=img_ext)
-        self.train_loader = DataLoader(
-            train_dataset, self.opt.batch_size, True,
-            num_workers=self.opt.num_workers, pin_memory=True, drop_last=True)
-        val_dataset = self.dataset(
-            self.opt.data_path, val_filenames, self.opt.height, self.opt.width,
-            self.opt.frame_ids, 4, is_train=False, img_ext=img_ext)
-        self.val_loader = DataLoader(
-            val_dataset, self.opt.batch_size, True,
-            num_workers=self.opt.num_workers, pin_memory=True, drop_last=True)
-        self.val_iter = iter(self.val_loader)
+            train_filenames = readlines(fpath.format("train"))
+            val_filenames = readlines(fpath.format("val"))
+
+            num_train_samples = len(train_filenames)
+
+            train_dataset = self.dataset(
+                self.opt.data_path, train_filenames, self.opt.height, self.opt.width,
+                self.opt.frame_ids, 4, is_train=True, img_ext=img_ext)
+            self.train_loader = DataLoader(
+                train_dataset, self.opt.batch_size, True,
+                num_workers=self.opt.num_workers, pin_memory=True, drop_last=True)
+            val_dataset = self.dataset(
+                self.opt.data_path, val_filenames, self.opt.height, self.opt.width,
+                self.opt.frame_ids, 4, is_train=False, img_ext=img_ext)
+            self.val_loader = DataLoader(
+                val_dataset, self.opt.batch_size, True,
+                num_workers=self.opt.num_workers, pin_memory=True, drop_last=True)
+            self.val_iter = iter(self.val_loader)
+        else:
+            fpath = os.path.join(os.path.dirname(__file__), "splits", self.opt.split, "{}_video_list.txt")
+            train_videopaths = readlines(fpath.format("train"))
+            val_videopaths = readlines(fpath.format("val"))
+
+            train_dataset = datasets.SequenceRawKittiDataset(self.opt.data_path, train_videopaths,
+                self.opt.batch_size, img_ext, self.opt.frame_ids, height=self.opt.height, width=self.opt.width,
+                num_scales=4, is_train=True)
+            self.train_loader = train_dataset
+            val_dataset = datasets.SequenceRawKittiDataset(self.opt.data_path, val_videopaths,
+                self.opt.batch_size, img_ext, self.opt.frame_ids, height=self.opt.height, width=self.opt.width,
+                num_scales=4, is_train=False)
+            self.val_loader = val_dataset
+            self.val_iter = iter(self.val_loader)
+            num_train_samples = train_dataset.steps
+
+        self.num_total_steps = num_train_samples // self.opt.batch_size * self.opt.num_epochs
 
         self.writers = {}
         for mode in ["train", "val"]:
