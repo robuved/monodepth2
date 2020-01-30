@@ -88,9 +88,13 @@ for key, video_ids in split.items():
             file_ids = [int(file.stem) for file in path_to_data.glob(f"*.{extension}")]
             file_ids = sorted(file_ids)
             max_ids = max(file_ids)
-            for id in file_ids:
-                if id + rel_min >= 0 and id + rel_max <= max_ids:
-                    out.write(f"{str(rel_path)} {id} l\n{str(rel_path)} {id} r\n")
+
+            prev_id = None
+            for f_id in file_ids:
+                if f_id + rel_min >= 0 and f_id + rel_max <= max_ids and \
+                       (prev_id is None or f_id + rel_min > prev_id + rel_max):
+                    out.write(f"{str(rel_path)} {f_id} l\n")
+                    prev_id = f_id
             print(f"{path}: {len(file_ids)}")
     print("Wrote files list for ", key)
 

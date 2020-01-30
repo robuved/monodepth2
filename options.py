@@ -144,11 +144,11 @@ class MonodepthOptions:
         self.parser.add_argument("--lstm_hidden_size",
                                  type=int,
                                  help="size of hidden state",
-                                 default=32)
+                                 default=64)
         self.parser.add_argument("--pose_mlp_hidden_size",
                                  type=int,
                                  help="size of hidden state",
-                                 default=32)
+                                 default=64)
 
         # SYSTEM options
         self.parser.add_argument("--no_cuda",

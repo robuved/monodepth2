@@ -46,7 +46,8 @@ class MonoDataset(data.Dataset):
                  frame_idxs,
                  num_scales,
                  is_train=False,
-                 img_ext='.jpg'):
+                 img_ext='.jpg',
+                 use_imu=True):
         super(MonoDataset, self).__init__()
 
         self.data_path = data_path
@@ -57,9 +58,10 @@ class MonoDataset(data.Dataset):
         self.interp = Image.ANTIALIAS
 
         self.frame_idxs = frame_idxs
-
+        
         self.is_train = is_train
         self.img_ext = img_ext
+        self.use_imu = use_imu
 
         self.loader = pil_loader
         self.to_tensor = transforms.ToTensor()
@@ -138,10 +140,12 @@ class MonoDataset(data.Dataset):
         inputs = {}
 
         do_color_aug = self.is_train and random.random() > 0.5
-        do_flip = self.is_train and random.random() > 0.5
+        if self.use_imu:
+            do_flip = False
+        else:
+            do_flip = self.is_train and random.random() > 0.5
         
         # would mess with the IMU measurements
-        do_flip = False
 
         line = self.filenames[index].split()
         folder = line[0]
@@ -163,15 +167,17 @@ class MonoDataset(data.Dataset):
                 inputs[("color", i, -1)] = self.get_color(folder, frame_index, other_side, do_flip)
             else:
                 inputs[("color", i, -1)] = self.get_color(folder, frame_index + i, side, do_flip)
-            inputs[("timestamp", i)] = self.get_timestamp(folder, frame_index + i, side)
-            timestamps.append(inputs[('timestamp', i)])
+            if self.use_imu:
+                inputs[("timestamp", i)] = self.get_timestamp(folder, frame_index + i, side)
+                inputs[("timestamp", i)] = torch.tensor(inputs[("timestamp", i)], dtype=torch.float64)
+                timestamps.append(inputs[('timestamp', i)])
         
-        ts, acc, angular_velocity = \
-            self.get_imu_measurements(folder, min(timestamps), max(timestamps))
+        if self.use_imu:
+            ts, acc, angular_velocity = \
+                self.get_imu_measurements(folder, min(timestamps), max(timestamps))
 
-        inputs[("imu", "timestamps")] = ts
-        inputs[("imu", "measurements")] = torch.cat((acc, angular_velocity), dim=0)
-        print('seq len', len(ts))
+            inputs[("imu", "timestamps")] = torch.tensor(ts, dtype=torch.float64).unsqueeze(axis=1)
+            inputs[("imu", "measurements")] = torch.cat((acc, angular_velocity), dim=1)
 
         # adjusting intrinsics to match each scale in the pyramid
         for scale in range(self.num_scales):

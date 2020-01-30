@@ -71,14 +71,15 @@ class KITTIRAWDataset(KITTIDataset):
             self.data_path, folder, "image_0{}/timestamps.txt".format(self.side_map[side]))
         if timestamp_path not in self.timestamp_file_contents:
             self.timestamp_file_contents[timestamp_path] = get_timestamps(timestamp_path)
-        return self.timestamp_file_contents[timestamp_path][frame_index]
+        return self.timestamp_file_contents[timestamp_path][1][frame_index]
 
     def get_imu_measurements(self, folder, start, end):
         timestamp_path = os.path.join(
             self.data_path, folder, "oxts", "timestamps.txt")
         if timestamp_path not in self.timestamp_file_contents:
             self.timestamp_file_contents[timestamp_path] = get_timestamps(timestamp_path)
-        timestamps = self.timestamp_file_contents[timestamp_path]
+        unique_indexes, timestamps = self.timestamp_file_contents[timestamp_path]
+        timestamps = timestamps[unique_indexes]
 
         imu_data_path = os.path.join(
             self.data_path, folder, "oxts", "data")
@@ -95,8 +96,8 @@ class KITTIRAWDataset(KITTIDataset):
             end_index = 0
     
         return timestamps[start_index:end_index + 1], \
-            acc[start_index: end_index + 1], \
-            gyro[start_index: end_index + 1]
+            acc[unique_indexes][start_index: end_index + 1], \
+            gyro[unique_indexes][start_index: end_index + 1]
 
     def get_depth(self, folder, frame_index, side, do_flip):
         calib_path = os.path.join(self.data_path, folder.split("/")[0])

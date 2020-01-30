@@ -39,7 +39,7 @@ class Trainer:
         self.models = {}
         self.parameters_to_train = []
 
-        self.device = torch.device("cpu" if self.opt.no_cuda else "cuda")
+        self.device = torch.device("cpu" if self.opt.no_cuda else f'cuda:{get_free_gpu()}')
 
         self.num_scales = len(self.opt.scales)
         self.num_input_frames = len(self.opt.frame_ids)
@@ -102,7 +102,7 @@ class Trainer:
 
         if self.opt.use_imu:
             self.models["imu_lstm"] = nn.LSTM(6, self.opt.lstm_hidden_size, self.opt.lstm_num_layers).to(self.device)
-            self.lstm_hn, self.lstm_cn = None, None
+            self.lstm_hs = None
             self.models["hidden_to_imu"] = torch.nn.Sequential(
                 torch.nn.Linear(self.opt.lstm_hidden_size, 6),
                 # torch.nn.Sigmoid(),
@@ -110,7 +110,6 @@ class Trainer:
                 # torch.nn.Sigmoid(),
                 # torch.nn.Linear(self.opt.pose_mlp_hidden_size, 6),
             ).to(self.device)
-            self.eye_buffer = (torch.unsqueeze(torch.eye(3), axis=0)).repeat(self.opt.batch_size, 1, 1)
 
         self.model_optimizer = optim.Adam(self.parameters_to_train, self.opt.learning_rate)
         self.model_lr_scheduler = optim.lr_scheduler.StepLR(
@@ -130,23 +129,23 @@ class Trainer:
 
         img_ext = '.png' if self.opt.png else '.jpg'
 
+        fpath = os.path.join(os.path.dirname(__file__), "splits", self.opt.split, "{}_files.txt")
+
+        train_filenames = readlines(fpath.format("train"))
+        val_filenames = readlines(fpath.format("val"))
+
+        num_train_samples = len(train_filenames)
+
         if not self.opt.use_imu:
-            fpath = os.path.join(os.path.dirname(__file__), "splits", self.opt.split, "{}_files.txt")
-
-            train_filenames = readlines(fpath.format("train"))
-            val_filenames = readlines(fpath.format("val"))
-
-            num_train_samples = len(train_filenames)
-
             train_dataset = self.dataset(
                 self.opt.data_path, train_filenames, self.opt.height, self.opt.width,
-                self.opt.frame_ids, 4, is_train=True, img_ext=img_ext)
+                self.opt.frame_ids, 4, is_train=True, img_ext=img_ext, use_imu=False)
             self.train_loader = DataLoader(
                 train_dataset, self.opt.batch_size, True,
                 num_workers=self.opt.num_workers, pin_memory=True, drop_last=True)
             val_dataset = self.dataset(
                 self.opt.data_path, val_filenames, self.opt.height, self.opt.width,
-                self.opt.frame_ids, 4, is_train=False, img_ext=img_ext)
+                self.opt.frame_ids, 4, is_train=False, img_ext=img_ext, use_imu=False)
             self.val_loader = DataLoader(
                 val_dataset, self.opt.batch_size, True,
                 num_workers=self.opt.num_workers, pin_memory=True, drop_last=True)
@@ -155,17 +154,15 @@ class Trainer:
             fpath = os.path.join(os.path.dirname(__file__), "splits", self.opt.split, "{}_video_list.txt")
             train_videopaths = readlines(fpath.format("train"))
             val_videopaths = readlines(fpath.format("val"))
-
-            train_dataset = datasets.SequenceRawKittiDataset(self.opt.data_path, train_videopaths,
+            train_dataset = datasets.SequenceRawKittiDataset(self.opt.data_path, train_videopaths, train_filenames,
                 self.opt.batch_size, img_ext, self.opt.frame_ids, height=self.opt.height, width=self.opt.width,
                 num_scales=4, is_train=True)
-            self.train_loader = train_dataset
-            val_dataset = datasets.SequenceRawKittiDataset(self.opt.data_path, val_videopaths,
+            self.train_loader = DataLoader(train_dataset)
+            val_dataset = datasets.SequenceRawKittiDataset(self.opt.data_path, val_videopaths, val_filenames,
                 self.opt.batch_size, img_ext, self.opt.frame_ids, height=self.opt.height, width=self.opt.width,
                 num_scales=4, is_train=False)
-            self.val_loader = val_dataset
+            self.val_loader = DataLoader(val_dataset)
             self.val_iter = iter(self.val_loader)
-            num_train_samples = train_dataset.steps
 
         self.num_total_steps = num_train_samples // self.opt.batch_size * self.opt.num_epochs
 
@@ -224,13 +221,12 @@ class Trainer:
     def run_epoch(self):
         """Run a single epoch of training and validation
         """
-        self.model_lr_scheduler.step()
 
         print("Training")
         self.set_train()
 
         for batch_idx, inputs in enumerate(self.train_loader):
-
+            inputs = {k: v.squeeze(0) for k, v in inputs.items()}
             before_op_time = time.time()
 
             outputs, losses = self.process_batch(inputs)
@@ -238,16 +234,18 @@ class Trainer:
             self.model_optimizer.zero_grad()
             losses["loss"].backward()
             self.model_optimizer.step()
+            self.model_lr_scheduler.step()
 
             duration = time.time() - before_op_time
 
             # log less frequently after the first 2000 steps to save time & disk space
             early_phase = batch_idx % self.opt.log_frequency == 0 and self.step < 2000
             late_phase = self.step % 2000 == 0
-
+            
+            # early_phase = True
             if early_phase or late_phase:
                 self.log_time(batch_idx, duration, losses["loss"].cpu().data)
-
+                loss = losses['loss'].cpu().data
                 if "depth_gt" in inputs:
                     self.compute_depth_losses(inputs, outputs, losses)
 
@@ -255,6 +253,8 @@ class Trainer:
                 self.val()
 
             self.step += 1
+
+            del inputs, outputs, losses
 
     def process_batch(self, inputs):
         """Pass a minibatch through the network and generate images and losses
@@ -359,53 +359,51 @@ class Trainer:
         # propagate IMU data though LSTM and mapping linear layer + add input
         imu_timestamps = inputs[("imu", "timestamps")]
         imu_measurements = inputs[("imu", "measurements")]
-        imu_features, self.lstm_hn, self.lstm_cn = self.models["imu_lstm"](imu_measurements, self.lstm_hn, self.lstm_cn)
+        imu_features, self.lstm_hs = self.models["imu_lstm"](imu_measurements, self.lstm_hs)
+        self.lstm_hs = (self.lstm_hs[0].detach().clone(), self.lstm_hs[0].detach().clone())
         imu_corrected = imu_measurements + self.models["hidden_to_imu"](imu_features)
         # BATCH size X SEQUENCE length X 6
         imu_index = 0
-
+        
         cam_T_cam = {}
         
+        b_size = inputs[("timestamp", 0)].shape[0]
+
         for f_id1, f_id2 in zip(sorted_frame_ids[:-1], sorted_frame_ids[1:]):
             ts1 = inputs[("timestamp", f_id1)]
             ts2 = inputs[("timestamp", f_id2)]   
 
-            cum_rotation = None
-            cum_pos = None
-            cum_vel = None             
-            for ts, imu_index in enumerate(imu_timestamps):
-                if not (ts1 <= ts <= ts2):
-                    continue
+            cum_rotation = torch.eye(3).repeat(b_size, 1, 1).to(self.device)
+            cum_pos = torch.zeros((b_size, 3, 1)).to(self.device)
+            cum_vel = torch.zeros((b_size, 3, 1)).to(self.device)
 
+            for imu_index, _ in enumerate(imu_timestamps):
+                # print (ts1.item(), ts.item(), ts2.item(), (ts1 <= ts <= ts2).item())
+                ts = imu_timestamps[imu_index, :, 0]
                 prev_ts = ts1
-                if imu_index - 1 >= 0 and imu_timestamps[imu_index - 1] > ts1:
-                    prev_ts = imu_timestamps[imu_index - 1]
+                if imu_index - 1 >= 0:
+                    prev_ts = torch.max(prev_ts, imu_timestamps[imu_index - 1, 0])
 
                 current_ts = ts
-                if ts < ts2 and (imu_index + 1 < len(imu_timestamps) and 
-                        imu_timestamps[imu_index + 1] > ts2):
-                    current_ts = ts2
-                
-                dt = current_ts - prev_ts
+                current_ts = torch.min(current_ts, ts2)
+                invalid = torch.min(prev_ts > 0, current_ts > 0)
+                dt = (current_ts - prev_ts) * invalid
+                dt = dt[:, None]
 
-                c_gyro = imu_corrected[:, imu_index, 3:6] * dt
-                rotations = rot_from_axisangle(c_gyro)[:, :3, :3]
-                if cum_rotation is None:
-                    cum_rotation = rotations
-                else:
-                    cum_rotation = torch.matmul(cum_rotation, rotations)
+                c_gyro = imu_corrected[imu_index, :, 3:6] * dt
 
-                c_acc = imu_corrected[:, imu_index, :3]
+                rotations = rot_from_axisangle(c_gyro.unsqueeze(axis=1))[:, :3, :3]
+          
+                cum_rotation = torch.matmul(cum_rotation, rotations)
+
+                c_acc = imu_corrected[imu_index, :, :3].unsqueeze(axis=2)
+
                 global_acc = torch.matmul(cum_rotation, c_acc)
-                if cum_pos is None:
-                    cum_vel = torch.zeros_like(global_acc)
-                    cum_pos = torch.zeros_like(global_acc)
-                else:
-                    cum_vel = cum_vel + global_acc * dt
-                    cum_pos = cum_pos + cum_vel *  dt + 0.5 * global_acc * dt ** 2 
 
-            cam_T_cam[(f_id1, f_id2)] = (cum_rotation, cum_pos)
+                cum_vel = cum_vel + global_acc * dt[:, None, :]
+                cum_pos = cum_pos + cum_vel *  dt[:, None, :] + 0.5 * global_acc * dt[:, None, :] ** 2 
 
+            cam_T_cam[(f_id1, f_id2)] = (cum_rotation, cum_pos.transpose(1, 2))
         # compose IMU to get relative poses
         outputs = {}
         for f_id in self.opt.frame_ids[1:]:
@@ -419,8 +417,10 @@ class Trainer:
                 if T is None:
                     T = c_T
                 else:
-                    T = torch.matmul(T, c_T) if not reverse else torch.mult(c_T, T)
+                    T = torch.matmul(T, c_T) if not reverse else torch.matmul(c_T, T)
             outputs[("cam_T_cam_imu", 0, f_id)] = T
+
+        return outputs
 
     def val(self):
         """Validate the model on a single minibatch
@@ -431,7 +431,8 @@ class Trainer:
         except StopIteration:
             self.val_iter = iter(self.val_loader)
             inputs = self.val_iter.next()
-
+        
+        inputs = {k: v.squeeze(0) for k, v in inputs.items()}
         with torch.no_grad():
             outputs, losses = self.process_batch(inputs)
 
@@ -562,7 +563,7 @@ class Trainer:
                 reprojection_losses *= mask
 
                 # add a loss pushing mask to 1 (using nn.BCELoss for stability)
-                weighting_loss = 0.2 * nn.BCELoss()(mask, torch.ones(mask.shape).cuda())
+                weighting_loss = 0.2 * nn.BCELoss()(mask, torch.ones(mask.shape).to(self.device))
                 loss += weighting_loss.mean()
 
             if self.opt.avg_reprojection:
@@ -573,7 +574,7 @@ class Trainer:
             if not self.opt.disable_automasking:
                 # add random numbers to break ties
                 identity_reprojection_loss += torch.randn(
-                    identity_reprojection_loss.shape).cuda() * 0.00001
+                    identity_reprojection_loss.shape).to(self.device) * 0.00001
 
                 combined = torch.cat((identity_reprojection_loss, reprojection_loss), dim=1)
             else:
@@ -599,8 +600,8 @@ class Trainer:
             losses["loss/{}".format(scale)] = loss
             
         total_loss /= self.num_scales
-        losses["image_loss"] = total_loss
         losses["loss"] = total_loss
+        losses["image_loss"] = total_loss
         if self.opt.use_imu:
             imu_loss = 0
 
@@ -614,7 +615,7 @@ class Trainer:
                 translation_loss = torch.mean(torch.sum(t_imu * t, dim=-1))
                 imu_loss = rot_loss + translation_loss
 
-            losses["imu_loss"] = imu_loss / (self.opt.frame_ids - 1)
+            losses["imu_loss"] = imu_loss / (len(self.opt.frame_ids) - 1)
             losses["loss"] += losses["imu_loss"]
         return losses
 
@@ -638,18 +639,18 @@ class Trainer:
         mask = mask * crop_mask
 
         depth_gt = depth_gt[mask]
-        depth_pred_original = depth_pred[mask]
-        depth_pred *= torch.median(depth_gt) / torch.median(depth_pred_original)
+        depth_pred = depth_pred[mask]
+        depth_pred_scaled = depth_pred * torch.median(depth_gt) / torch.median(depth_pred)
 
-        depth_pred = torch.clamp(depth_pred, min=1e-3, max=80)
-
-        depth_errors = compute_depth_errors(depth_gt, depth_pred)
+        depth_pred_scaled = torch.clamp(depth_pred_scaled, min=1e-3, max=80)
+         
+        depth_errors = compute_depth_errors(depth_pred_scaled, depth_pred)
 
         for i, metric in enumerate(self.depth_metric_names):
             losses[metric] = np.array(depth_errors[i].cpu())
 
         if self.opt.use_imu:
-            depth_pred = torch.clamp(depth_pred_original, min=1e-3, max=80)
+            depth_pred = torch.clamp(depth_pred, min=1e-3, max=80)
 
             depth_errors = compute_depth_errors(depth_gt, depth_pred)
 

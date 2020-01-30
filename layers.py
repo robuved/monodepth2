@@ -46,26 +46,27 @@ def transformation_from_parameters(axisangle, translation, invert=False):
 
 
 def transformation_from_matrix(rotation, translation, invert=False):
-    R = rotation.clone()
+    R = torch.zeros((rotation.shape[0], 4, 4)).to(device=rotation.device)
+
+    R[:, :3, :3] = rotation
+
     t = translation.clone()
 
     if invert:
         R = R.transpose(1, 2)
         t *= -1
-
     T = get_translation_matrix(t)
 
     if invert:
         M = torch.matmul(R, T)
     else:
         M = torch.matmul(T, R)
-
     return M
 
 
 def rot_translation_from_transformation(transformation):
     R = transformation[:, :3, :3]
-    t = transformation[:, :3, 3]
+    t = transformation[:, :3, 3:]
     t = torch.matmul(R.transpose(1, 2), t)
     return R, t
 
