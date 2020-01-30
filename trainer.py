@@ -110,6 +110,9 @@ class Trainer:
                 # torch.nn.Sigmoid(),
                 # torch.nn.Linear(self.opt.pose_mlp_hidden_size, 6),
             ).to(self.device)
+            self.parameters_to_train += list(self.models["imu_lstm"].parameters())
+            self.parameters_to_train += list(self.models["hidden_to_imu"].parameters())
+
             if self.opt.pose_fuse:
                 self.models["pose_fuse_mlp"] = torch.nn.Sequential(
                     torch.nn.Linear(24, self.opt.pose_mlp_hidden_size),
@@ -118,6 +121,7 @@ class Trainer:
                     torch.nn.Sigmoid(),
                     torch.nn.Linear(self.opt.pose_mlp_hidden_size, 6),
                 ).to(self.device)
+                self.parameters_to_train += list(self.models["pose_fuse_mlp"].parameters())
 
         self.model_optimizer = optim.Adam(self.parameters_to_train, self.opt.learning_rate)
         self.model_lr_scheduler = optim.lr_scheduler.StepLR(
