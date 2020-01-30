@@ -90,16 +90,20 @@ for key, video_ids in split.items():
             max_ids = max(file_ids)
 
             prev_id = None
+            not_first = False
             for f_id in file_ids:
                 save = False
                 if key == 'test':
-                    save = True
+                    if not_first:
+                        save = True
                 elif f_id + rel_min >= 0 and f_id + rel_max <= max_ids and \
                        (prev_id is None or f_id + rel_min > prev_id + rel_max):
                     save = True
                     prev_id = f_id
                 if save:
                     out.write(f"{str(rel_path)} {f_id} l\n")
+                not_first = True
+
             print(f"{path}: {len(file_ids)}")
     print("Wrote files list for ", key)
 

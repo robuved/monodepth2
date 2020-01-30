@@ -150,7 +150,7 @@ class MonodepthOptions:
                                  help="size of hidden state",
                                  default=64)
         self.parser.add_argument("--pose_fuse",
-                                help-"if set, fuse posenet and imu pose with mlp",
+                                help="if set, fuse posenet and imu pose with mlp",
                                 action="store_true")
 
         # SYSTEM options

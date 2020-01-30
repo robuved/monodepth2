@@ -116,7 +116,7 @@ class Trainer:
                     torch.nn.Sigmoid(),
                     torch.nn.Linear(self.opt.pose_mlp_hidden_size, self.opt.pose_mlp_hidden_size),
                     torch.nn.Sigmoid(),
-                    torch.nn.Linear(self.opt.pose_mlp_hidden_size, 16),
+                    torch.nn.Linear(self.opt.pose_mlp_hidden_size, 6),
                 ).to(self.device)
 
         self.model_optimizer = optim.Adam(self.parameters_to_train, self.opt.learning_rate)
@@ -298,7 +298,7 @@ class Trainer:
             outputs.update(self.predict_poses_from_imu2(inputs))
         
         if self.opt.pose_fuse:
-            outputs.update(self.fuse_poses(outputs))
+            self.fuse_poses(outputs)
 
         self.generate_images_pred(inputs, outputs)
         losses = self.compute_losses(inputs, outputs)
@@ -458,9 +458,10 @@ class Trainer:
             pose_imu = transformation_to_tensor(outputs[("cam_T_cam_imu", 0, f_id)])
             pose_fuse_input = torch.cat([pose_net, pose_imu], dim=1)
             pose_fuse_output = self.models['pose_fuse_mlp'](pose_fuse_input)
-            rot = pose_fuse_output[:, 9].reshape(-1, 3, 3)
-            tr = pose_fuse_output[:, 9:12].reshape(-1, 3, 1)
-            outputs[("cam_T_cam_fuse", 0, f_id)] = transformation_from_matrix(rot, tr)
+            axisangle = pose_fuse_output[:, :3].reshape(-1, 1, 3)
+            tr = pose_fuse_output[:, 3:6].reshape(-1, 1, 3)
+            T = transformation_from_parameters(axisangle, tr)
+            outputs[("cam_T_cam_fuse", 0, f_id)] = T
 
     def predict_poses_from_imu(self, inputs):
         # get relative poses ordered
