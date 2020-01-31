@@ -192,6 +192,12 @@ class MonodepthOptions:
         self.parser.add_argument("--disable_median_scaling",
                                  help="if set disables median scaling in evaluation",
                                  action="store_true")
+        self.parser.add_argument("--enable_pose_scaling",
+                                 help="if set disables median scaling in evaluation",
+                                 action="store_false")
+        self.parser.add_argument("--enable_vins_scaling",
+                                 help="if set disables median scaling in evaluation",
+                                 action="store_false")
         self.parser.add_argument("--pred_depth_scale_factor",
                                  help="if set multiplies predictions by this number",
                                  type=float,

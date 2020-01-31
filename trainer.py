@@ -427,7 +427,6 @@ class Trainer:
                     imu_index += 1
 
                 cam_T_cam[(f_id1, f_id2)].append((cum_rotation, cum_pos[None, :, None]))
-        
 
         for k, v in cam_T_cam.items():
             rots, pos = zip(*v)
