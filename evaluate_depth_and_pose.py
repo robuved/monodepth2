@@ -183,8 +183,8 @@ def evaluate(opt):
         eval_depth(opt, pred_disps, scale_factors)
 
 
-def eval_pose(opt, pred_poses, sequence_id):
-    gt_poses_path = os.path.join(opt.data_path, "poses", "{:02d}.txt".format(sequence_id))
+def eval_pose(opt, pred_poses, video):
+    gt_poses_path = os.path.join(opt.data_path, video, "oxts", "poses.txt")
 
     gt_global_poses = np.loadtxt(gt_poses_path).reshape(-1, 3, 4)
     gt_global_poses = np.concatenate(
@@ -272,7 +272,7 @@ def eval_depth(opt, pred_disps, scaling_factors):
     for k, factors in scaling_factors:
         factors = np.array(factors)
         med = np.median(factors)
-        print(f"{k} scaling ratios | med: {:0.3f} | std: {:0.3f}".format(med, np.std(factors / med)))
+        print("{} scaling ratios | med: {:0.3f} | std: {:0.3f}".format(k, med, np.std(factors / med)))
 
     mean_errors = np.array(errors).mean(0)
 
