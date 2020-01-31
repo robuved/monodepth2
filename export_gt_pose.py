@@ -14,9 +14,11 @@ import PIL.Image as pil
 
 from utils import readlines
 from kitti_utils import generate_depth_map
+from other_kitti_utils import load_oxts_packets_and_poses
 
+# Source: https://github.com/utiasSTARS/pykitti
 
-def export_gt_depths_kitti():
+def export_gt_poses_kitti():
 
     parser = argparse.ArgumentParser(description='export_gt_depth')
 
@@ -28,38 +30,33 @@ def export_gt_depths_kitti():
                         type=str,
                         help='which split to export gt from',
                         required=True,
-                        choices=["eigen", "eigen_benchmark", "raw_odometry"])
+                        choices=["raw_odometry"])
     opt = parser.parse_args()
 
     split_folder = os.path.join(os.path.dirname(__file__), "splits", opt.split)
-    lines = readlines(os.path.join(split_folder, "test_files.txt"))
+    files = readlines(os.path.join(split_folder, "test_files.txt"))
+    videos = readlines(os.path.join(split_folder, "test_video_list.txt"))
 
     print("Exporting ground truth depths for {}".format(opt.split))
 
-    gt_depths = []
-    for line in lines:
+    for video in videos:
+        oxts_paths = []
+        for file in files:
+            if file.startswith(video):
+                folder, frame_id, _ = file.split()
+                frame_id = int(frame_id)
 
-        folder, frame_id, _ = line.split()
-        frame_id = int(frame_id)
+                filepath_oxst = os.path.join(opt.data_path, folder,
+                                             "oxts", "data", "{:010d}.txt".format(frame_id))
 
-        if opt.split in ["eigen", "raw_odometry"]:
-            calib_dir = os.path.join(opt.data_path, folder.split("/")[0])
-            velo_filename = os.path.join(opt.data_path, folder,
-                                         "velodyne_points/data", "{:010d}.bin".format(frame_id))
-            gt_depth = generate_depth_map(calib_dir, velo_filename, 2, True)
-        elif opt.split == "eigen_benchmark":
-            gt_depth_path = os.path.join(opt.data_path, folder, "proj_depth",
-                                         "groundtruth", "image_02", "{:010d}.png".format(frame_id))
-            gt_depth = np.array(pil.open(gt_depth_path)).astype(np.float32) / 256
+                oxts_paths.append(filepath_oxst)
+        oxts = load_oxts_packets_and_poses(oxts_paths)
+        poses_path = os.path.join(opt.data_path, video,
+                                 "oxts", "poses.txt")
+        poses = np.array([o[1] for o in oxts])
+        print("Saving to {}".format(poses_path))
 
-        gt_depths.append(gt_depth.astype(np.float32))
-
-    output_path = os.path.join(split_folder, "gt_depths.npz")
-
-    print("Saving to {}".format(opt.split))
-
-    np.savez_compressed(output_path, data=np.array(gt_depths))
-
+        np.savetxt(poses_path, poses)
 
 if __name__ == "__main__":
-    export_gt_depths_kitti()
+    export_gt_poses_kitti()
