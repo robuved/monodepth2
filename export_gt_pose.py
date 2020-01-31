@@ -51,6 +51,7 @@ def export_gt_poses_kitti():
         poses_path = os.path.join(opt.data_path, video,
                                  "oxts", "poses.txt")
         poses = np.stack([np.array(o[1]) for o in oxts])
+        
         print("Saving to {}".format(poses_path))
         poses = poses[:, :3, :].reshape(-1, 12)
         np.savetxt(poses_path, poses)

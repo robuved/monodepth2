@@ -3,8 +3,8 @@
 # aathor trained
 python ../evaluate_pose.py \
   --data_path ../kitti_odom \
-  --model_name M_640x192_author \
-  --load_weights_folder ../tensorboard/M_640x192_author\
+  --model_name M_640x192_mine \
+  --load_weights_folder ../tensorboard/M_640x192_no_IMU/models/weights_29/\
   --eval_split odom_9
 
 # Standard model with rescaling

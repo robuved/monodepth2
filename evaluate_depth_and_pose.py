@@ -144,7 +144,7 @@ def evaluate(opt):
     for videoname in videonames:
         dataset = SequenceRawKittiDataset(opt.data_path, [videoname], filenames, 1, 
                                            imu_data_path=opt.imu_data_path,
-                                           img_ext=img_ext, frame_idxs=[0, -1],
+                                           img_ext=img_ext, frame_idxs=[0, 1],
                                            height=encoder_dict['height'], width=encoder_dict['width'],
                                            num_scales=4, is_train=False)
         dataloader = DataLoader(dataset, shuffle=False, num_workers=0)
@@ -155,7 +155,7 @@ def evaluate(opt):
 
         print("-> Computing pose predictions")
 
-        opt.frame_ids = [0, -1]  # pose network only takes two frames as input
+        opt.frame_ids = [0, 1]  # pose network only takes two frames as input
 
         with torch.no_grad():
             for inputs in dataloader:
@@ -174,16 +174,16 @@ def evaluate(opt):
                 features = [pose_encoder(all_color_aug)]
                 axisangle, translation = pose_decoder(features)
                 outputs = {}
-                outputs[("cam_T_cam", 0, -1)] = transformation_from_parameters(
+                outputs[("cam_T_cam", 0, 1)] = transformation_from_parameters(
                     axisangle[:, 0], translation[:, 0], invert=False)
 
-                T = outputs[("cam_T_cam", 0, -1)]
+                T = outputs[("cam_T_cam", 0, 1)]
                 if opt.use_imu:
                     outputs = predict_poses_from_imu2(opt, inputs, imu_lstm, lstm_hs, hidden_to_imu)
-                    T_better = np.linalg.inv(outputs[("cam_T_cam_imu", 0, -1)])
+                    T_better = np.linalg.inv(outputs[("cam_T_cam_imu", 0, 1)])
                     if opt.pose_fuse:
                         fuse_poses(opt, outputs, pose_fuse_mlp)
-                        T_better = np.linalg.inv(outputs[("cam_T_cam_fuse", 0, -1)])
+                        T_better = np.linalg.inv(outputs[("cam_T_cam_fuse", 0, 1)])
 
                     if opt.enable_pose_scaling:
                         R, t = rot_translation_from_transformation(T)

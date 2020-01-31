@@ -95,11 +95,10 @@ for key, video_ids in split.items():
             max_ids = max(file_ids)
 
             prev_id = None
-            not_first = False
-            for f_id in file_ids:
+            for index, f_id in enumerate(file_ids):
                 save = False
                 if key == 'test':
-                    if not_first:
+                    if index != len(file_ids) - 1:
                         save = True
                 elif f_id + rel_min >= 0 and f_id + rel_max <= max_ids and \
                        (prev_id is None or f_id + rel_min > prev_id + rel_max):
