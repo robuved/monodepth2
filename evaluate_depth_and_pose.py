@@ -15,12 +15,13 @@ from layers import disp_to_depth
 from layers import transformation_from_parameters
 from utils import readlines
 from options import MonodepthOptions
-from datasets import SequenceRawKittiDataset
+from datasets import SequenceRawKittiDataset, KITTIOdomDataset, KITTIRAWDataset
 import networks
 import torch.nn as nn
 from layers import transformation_from_matrix, rot_from_axisangle, rot_translation_from_transformation
 from collections import defaultdict
 import cv2
+from matplotlib import pyplot as plt
 
 
 def compute_errors(gt, pred):
@@ -98,9 +99,6 @@ def evaluate(opt):
     depth_decoder.eval()
 
     # Pose
-    splits_dir = os.path.join(os.path.dirname(__file__), "splits")
-    filenames = readlines(os.path.join(splits_dir, opt.eval_split,"test_files.txt"))
-
     pose_encoder_path = os.path.join(opt.load_weights_folder, "pose_encoder.pth")
     pose_decoder_path = os.path.join(opt.load_weights_folder, "pose.pth")
 
@@ -137,21 +135,53 @@ def evaluate(opt):
             pose_fuse_mlp.eval()
 
     img_ext = '.png' if opt.png else '.jpg'
-    videonames = readlines(os.path.join(splits_dir, opt.eval_split, "test_video_list.txt"))
 
     pred_disps = []
     scale_factors = []
-    for videoname in videonames:
-        dataset = SequenceRawKittiDataset(opt.data_path, [videoname], filenames, 1, 
+    
+    kitty_odom = False
+    if opt.eval_split.startswith("odom"):
+        kitty_odom = True
+
+    if kitty_odom:
+        ids = [int(opt.eval_split.split("_")[1])]
+    else:
+        splits_dir = os.path.join(os.path.dirname(__file__), "splits")
+        videonames = readlines(os.path.join(splits_dir, opt.eval_split, "test_video_list.txt"))
+        ids = videonames
+
+    for videoname in ids:
+        if kitty_odom:
+            filenames = readlines(
+                     os.path.join(splits_dir, opt.eval_split,
+                     "test_files_{:02d}.txt".format(videoname)))
+        else:
+            filenames = readlines(os.path.join(splits_dir, opt.eval_split,"test_files.txt"))
+        if kitty_odom:
+
+            dataset = KITTIOdomDataset(opt.data_path, filenames, opt.height, opt.width,
+                               [0, 1], 4, is_train=False, use_imu=False)
+            dataloader = DataLoader(dataset, opt.batch_size, shuffle=False,
+                            num_workers=opt.num_workers, pin_memory=True, drop_last=False)
+        else:
+            if opt.use_imu:
+                dataset = SequenceRawKittiDataset(opt.data_path, [videoname], filenames, 1, 
                                            imu_data_path=opt.imu_data_path,
                                            img_ext=img_ext, frame_idxs=[0, 1],
                                            height=encoder_dict['height'], width=encoder_dict['width'],
                                            num_scales=4, is_train=False)
-        dataloader = DataLoader(dataset, shuffle=False, num_workers=0)
-
+                dataloader = DataLoader(dataset, shuffle=False, num_workers=0)
+            else:
+                filenames = list(filter(lambda f: f.startswith(videoname), filenames))
+                dataset = KITTIRAWDataset(opt.data_path, filenames, opt.height, opt.width,
+                               [0, 1], 4, is_train=False, use_imu=False)
+                dataloader = DataLoader(dataset, opt.batch_size, shuffle=False,
+                            num_workers=opt.num_workers, pin_memory=True, drop_last=False)
         # pred_poses = [np.eye(4).reshape(1, 4, 4)]
         pred_poses = []
         imu_scale_factors = []
+        
+        print("EVALUATING ", opt.model_name)
 
         print("-> Computing pose predictions")
 
@@ -160,9 +190,12 @@ def evaluate(opt):
         with torch.no_grad():
             for inputs in dataloader:
                 for key, ipt in inputs.items():
-                    inputs[key] = ipt.cuda().squeeze(0)
+                    inputs[key] = ipt.cuda()
+                    if opt.use_imu:
+                        inputs[key] = inputs[key].squeeze(0)
                 input_color = inputs[("color", 0, 0)]
-                output = depth_decoder(encoder(input_color))
+                feature = encoder(input_color)
+                output = depth_decoder(feature)
 
                 pred_disp, _ = disp_to_depth(output[("disp", 0)], opt.min_depth, opt.max_depth)
                 pred_disp = pred_disp.cpu()[:, 0].numpy()
@@ -180,34 +213,39 @@ def evaluate(opt):
                 T = outputs[("cam_T_cam", 0, 1)]
                 if opt.use_imu:
                     outputs = predict_poses_from_imu2(opt, inputs, imu_lstm, lstm_hs, hidden_to_imu)
-                    T_better = np.linalg.inv(outputs[("cam_T_cam_imu", 0, 1)])
+                    T_better = outputs[("cam_T_cam_imu", 0, 1)]
                     if opt.pose_fuse:
                         fuse_poses(opt, outputs, pose_fuse_mlp)
-                        T_better = np.linalg.inv(outputs[("cam_T_cam_fuse", 0, 1)])
+                        T_better = outputs[("cam_T_cam_fuse", 0, 1)]
 
-                    if opt.enable_pose_scaling:
-                        R, t = rot_translation_from_transformation(T)
-                        Rb, tb = rot_translation_from_transformation(T_better)
-                        imu_scale_factor = tb / t
-                        imu_scale_factors.append(imu_scale_factor)
-                        scale_factors.append(imu_scale_factors)
+                    R, t = rot_translation_from_transformation(T)
+                    Rb, tb = rot_translation_from_transformation(T_better)
+                    imu_scale_factor = torch.sum(tb * t) / torch.sum(t ** 2)
+
+                    imu_scale_factors.append(imu_scale_factor.cpu().numpy())
+                    # scale_factors.append(imu_scale_factors)
 
                     T = T_better
 
                 pred_poses.append(T.cpu().numpy())
             
             pred_poses = np.concatenate(pred_poses)
-
-            eval_pose(opt, pred_poses, videoname)
+        
+            if opt.eval_split.startswith("odom"):
+                gt_poses_path = os.path.join(opt.data_path, "poses", "{:02d}.txt".format(videoname))
+            else:
+                gt_poses_path = os.path.join(opt.data_path, videoname, "oxts", "poses.txt")
+             
+            eval_pose(opt, pred_poses, gt_poses_path)
         scale_factors = {}
         if imu_scale_factors:
             scale_factors["IMU factor"] = imu_scale_factors
     pred_disps = np.concatenate(pred_disps)
-    eval_depth(opt, pred_disps, scale_factors)
+    if not kitty_odom:
+        eval_depth(opt, pred_disps, scale_factors)
 
 
-def eval_pose(opt, pred_poses, video):
-    gt_poses_path = os.path.join(opt.data_path, video, "oxts", "poses.txt")
+def eval_pose(opt, pred_poses, gt_poses_path):
 
     gt_global_poses = np.loadtxt(gt_poses_path).reshape(-1, 3, 4)
     gt_global_poses = np.concatenate(
@@ -219,11 +257,14 @@ def eval_pose(opt, pred_poses, video):
     for i in range(1, len(gt_global_poses)):
         gt_local_poses.append(
             np.linalg.inv(np.dot(np.linalg.inv(gt_global_poses[i - 1]), gt_global_poses[i])))
+        # gt_local_poses.append(
+        #     np.dot(np.linalg.inv(gt_global_poses[i - 1]), gt_global_poses[i]))
 
     ates = []
     ates_no_scaling = []
     num_frames = gt_xyzs.shape[0]
     track_length = 5
+    # print(pred_poses.shape, gt_global_poses.shape)
     for i in range(0, num_frames - 1):
         local_xyzs = np.array(dump_xyz(pred_poses[i:i + track_length - 1]))
         gt_local_xyzs = np.array(dump_xyz(gt_local_poses[i:i + track_length - 1]))
@@ -237,6 +278,35 @@ def eval_pose(opt, pred_poses, video):
     save_path = os.path.join(opt.load_weights_folder, "poses.npy")
     np.save(save_path, pred_poses)
     print("-> Predictions saved to", save_path)
+    
+    
+    # print("Plotting ...")
+    # def compose(poses):
+    #     prev_pose = np.eye(4)
+    #     global_poses = [prev_pose]
+
+    #     for pose in poses:
+    #         global_poses.append(global_poses[-1] @ pose)
+    #     return global_poses
+
+    # def collect_positions(poses):
+    #     return [p[:3, 3] for p in poses]
+
+    # gt_positions = collect_positions(compose(gt_local_poses))
+    # predicted_positions = collect_positions(compose(pred_poses))
+
+    # gt_positions = np.array(gt_positions)[:, :2]
+    # predicted_positions = np.array(predicted_positions)[:, :2]
+    # plt.figure()
+    # plt.plot(gt_positions[:, 0], gt_positions[:, 1], label='gt')
+    # plt.title(gt_poses_path)
+    # plt.legend()
+
+    # plt.figure()
+    # plt.plot(predicted_positions[:, 0], predicted_positions[:, 1], label='pred')
+    # plt.title(gt_poses_path)
+    # plt.legend()
+    # plt.show()
 
 
 def eval_depth(opt, pred_disps, scaling_factors):
@@ -410,3 +480,55 @@ if __name__ == "__main__":
 
 
 
+'''
+EVALUATING  M_640x192_author
+
+   Trajectory error: 1.687, std: 0.540
+   Trajectory error(no scaling): 1.689, std: 0.540
+   Trajectory error: 1.986, std: 0.071
+   Trajectory error(no scaling): 1.988, std: 0.071
+   Trajectory error: 0.432, std: 0.162
+   Trajectory error(no scaling): 0.433, std: 0.162
+   Trajectory error: 1.222, std: 0.325
+   Trajectory error(no scaling): 1.223, std: 0.325
+   Trajectory error: 1.175, std: 0.286
+   Trajectory error(no scaling): 1.176, std: 0.286
+ Median scaling ratios | med: 30.626 | std: 0.142
+
+   abs_rel |   sq_rel |     rmse | rmse_log |       a1 |       a2 |       a3 | 
+&   0.123  &   1.513  &   4.821  &   0.208  &   0.883  &   0.951  &   0.975  \\
+
+EVALUATING  M_640x192_no_IMU
+   Trajectory error: 1.222, std: 0.385
+   Trajectory error(no scaling): 1.684, std: 0.539
+   Trajectory error: 1.429, std: 0.054
+   Trajectory error(no scaling): 1.983, std: 0.071
+   Trajectory error: 0.315, std: 0.121
+   Trajectory error(no scaling): 0.430, std: 0.161
+   Trajectory error: 0.890, std: 0.241
+   Trajectory error(no scaling): 1.218, std: 0.325
+   Trajectory error: 0.861, std: 0.208
+   Trajectory error(no scaling): 1.172, std: 0.286
+ Median scaling ratios | med: 61.045 | std: 0.191
+
+   abs_rel |   sq_rel |     rmse | rmse_log |       a1 |       a2 |       a3 | 
+&   0.456  &   4.760  &  11.863  &   0.596  &   0.296  &   0.547  &   0.755  \\
+
+EVALUATING  M_640x192_IMU_2p_pose_fuse
+   Trajectory error: 1.409, std: 0.462
+   Trajectory error(no scaling): 1.688, std: 0.539
+   Trajectory error: 1.662, std: 0.094
+   Trajectory error(no scaling): 1.986, std: 0.071
+   Trajectory error: 0.356, std: 0.131
+   Trajectory error(no scaling): 0.432, std: 0.162
+   Trajectory error: 1.011, std: 0.265
+   Trajectory error(no scaling): 1.222, std: 0.325
+   Trajectory error: 0.969, std: 0.241
+   Trajectory error(no scaling): 1.175, std: 0.286
+IMU factor scaling ratios | med: -0.000 | std: 126.959
+ Median scaling ratios | med: 63.633 | std: 0.194
+
+   abs_rel |   sq_rel |     rmse | rmse_log |       a1 |       a2 |       a3 | 
+&   0.455  &   4.751  &  11.872  &   0.597  &   0.296  &   0.548  &   0.756  \\
+
+'''

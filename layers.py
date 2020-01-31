@@ -49,7 +49,7 @@ def transformation_from_matrix(rotation, translation, invert=False):
     R = torch.zeros((rotation.shape[0], 4, 4)).to(device=rotation.device)
 
     R[:, :3, :3] = rotation
-
+    R[:, 3, 3,] = 1
     t = translation.clone()
 
     if invert:
@@ -67,6 +67,7 @@ def transformation_from_matrix(rotation, translation, invert=False):
 def rot_translation_from_transformation(transformation):
     R = transformation[:, :3, :3]
     t = transformation[:, :3, 3:]
+    # print(R.shape, t.shape)
     t = torch.matmul(R.transpose(1, 2), t)
     return R, t
 
