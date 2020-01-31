@@ -21,6 +21,10 @@ class MonodepthOptions:
                                  type=str,
                                  help="path to the training data",
                                  default=os.path.join(file_dir, "kitti_data"))
+        self.parser.add_argument("--imu_data_path",
+                                 type=str,
+                                 help="path to the training imu data",
+                                 default='')
         self.parser.add_argument("--log_dir",
                                  type=str,
                                  help="log directory",
@@ -209,7 +213,7 @@ class MonodepthOptions:
                                  type=str,
                                  default="eigen",
                                  choices=[
-                                    "eigen", "eigen_benchmark", "benchmark", "odom_9", "odom_10"],
+                                    "eigen", "eigen_benchmark", "benchmark", "odom_9", "odom_10", "raw_odometry"],
                                  help="which split to run eval on")
         self.parser.add_argument("--save_pred_disps",
                                  help="if set saves predicted disparities",

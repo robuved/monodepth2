@@ -1,4 +1,3 @@
-# Copyright Niantic 2019. Patent Pending. All rights reserved.
 #
 # This software is licensed under the terms of the Monodepth2 licence
 # which allows for non-commercial use only, the full terms of which are made
@@ -21,8 +20,29 @@ import networks
 import torch.nn as nn
 from layers import transformation_from_matrix, rot_from_axisangle, rot_translation_from_transformation
 from collections import defaultdict
-from evaluate_depth import compute_errors
 import cv2
+
+
+def compute_errors(gt, pred):
+    """Computation of error metrics between predicted and ground truth depths
+    """
+    thresh = np.maximum((gt / pred), (pred / gt))
+    a1 = (thresh < 1.25     ).mean()
+    a2 = (thresh < 1.25 ** 2).mean()
+    a3 = (thresh < 1.25 ** 3).mean()
+
+    rmse = (gt - pred) ** 2
+    rmse = np.sqrt(rmse.mean())
+
+    rmse_log = (np.log(gt) - np.log(pred)) ** 2
+    rmse_log = np.sqrt(rmse_log.mean())
+
+    abs_rel = np.mean(np.abs(gt - pred) / gt)
+
+    sq_rel = np.mean(((gt - pred) ** 2) / gt)
+
+    return abs_rel, sq_rel, rmse, rmse_log, a1, a2, a3
+
 
 # from https://github.com/tinghuiz/SfMLearner
 def dump_xyz(source_to_target_transformations):
@@ -122,22 +142,25 @@ def evaluate(opt):
     pred_disps = []
     scale_factors = []
     for videoname in videonames:
-        dataset = SequenceRawKittiDataset(opt.opt.data_path, [videoname], filenames,
-                                                   1, img_ext=img_ext, frame_idxs=[0, -1],
-                                                   height=encoder_dict['height'], width=encoder_dict['width'],
-                                                   num_scales=4, is_train=False)
+        dataset = SequenceRawKittiDataset(opt.data_path, [videoname], filenames, 1, 
+                                           imu_data_path=opt.imu_data_path,
+                                           img_ext=img_ext, frame_idxs=[0, -1],
+                                           height=encoder_dict['height'], width=encoder_dict['width'],
+                                           num_scales=4, is_train=False)
         dataloader = DataLoader(dataset, shuffle=False, num_workers=0)
 
+        # pred_poses = [np.eye(4).reshape(1, 4, 4)]
         pred_poses = []
+        imu_scale_factors = []
 
         print("-> Computing pose predictions")
 
-        opt.frame_ids = [0, 1]  # pose network only takes two frames as input
+        opt.frame_ids = [0, -1]  # pose network only takes two frames as input
 
         with torch.no_grad():
             for inputs in dataloader:
                 for key, ipt in inputs.items():
-                    inputs[key] = ipt.cuda()
+                    inputs[key] = ipt.cuda().squeeze(0)
                 input_color = inputs[("color", 0, 0)]
                 output = depth_decoder(encoder(input_color))
 
@@ -146,15 +169,13 @@ def evaluate(opt):
 
                 pred_disps.append(pred_disp)
 
-                all_color_aug = torch.cat([inputs[("color_aug", i, 0)] for i in opt.frame_ids], 1)
+                all_color_aug = torch.cat([inputs[("color_aug", i, 0)] for i in sorted(opt.frame_ids)], 1)
 
                 features = [pose_encoder(all_color_aug)]
                 axisangle, translation = pose_decoder(features)
-                print(axisangle.shape, translation.shape)
+                outputs = {}
                 outputs[("cam_T_cam", 0, -1)] = transformation_from_parameters(
-                    axisangle[:, 0], translation[:, 0], invert=True)
-
-                imu_scale_factors = 1
+                    axisangle[:, 0], translation[:, 0], invert=False)
 
                 T = outputs[("cam_T_cam", 0, -1)]
                 if opt.use_imu:
@@ -167,20 +188,22 @@ def evaluate(opt):
                     if opt.enable_pose_scaling:
                         R, t = rot_translation_from_transformation(T)
                         Rb, tb = rot_translation_from_transformation(T_better)
-                        imu_scale_factors = tb / t
+                        imu_scale_factor = tb / t
+                        imu_scale_factors.append(imu_scale_factor)
                         scale_factors.append(imu_scale_factors)
 
                     T = T_better
 
-                pred_poses.append(T.cpu.numpy())
-
+                pred_poses.append(T.cpu().numpy())
+            
             pred_poses = np.concatenate(pred_poses)
-            eval_pose(pred_poses, videoname)
+
+            eval_pose(opt, pred_poses, videoname)
         scale_factors = {}
         if imu_scale_factors:
-            scale_factors["IMU factor"] = scale_factors
-        pred_disps = np.concatenate(pred_disps)
-        eval_depth(opt, pred_disps, scale_factors)
+            scale_factors["IMU factor"] = imu_scale_factors
+    pred_disps = np.concatenate(pred_disps)
+    eval_depth(opt, pred_disps, scale_factors)
 
 
 def eval_pose(opt, pred_poses, video):
@@ -222,7 +245,7 @@ def eval_depth(opt, pred_disps, scaling_factors):
     MIN_DEPTH = 1e-3
     MAX_DEPTH = 80
     gt_path = os.path.join(splits_dir, opt.eval_split, "gt_depths.npz")
-    gt_depths = np.load(gt_path, fix_imports=True, encoding='latin1')["data"]
+    gt_depths = np.load(gt_path, fix_imports=True, encoding='latin1', allow_pickle=True)["data"]
 
     print("-> Evaluating")
     print("   Mono evaluation - using median scaling")
@@ -269,8 +292,9 @@ def eval_depth(opt, pred_disps, scaling_factors):
         ratios = np.array(ratios)
         med = np.median(ratios)
         print(" Median scaling ratios | med: {:0.3f} | std: {:0.3f}".format(med, np.std(ratios / med)))
-    for k, factors in scaling_factors:
+    for k, factors in scaling_factors.items():
         factors = np.array(factors)
+        print(factors, factors.shape)
         med = np.median(factors)
         print("{} scaling ratios | med: {:0.3f} | std: {:0.3f}".format(k, med, np.std(factors / med)))
 

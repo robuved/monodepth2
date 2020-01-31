@@ -76,6 +76,8 @@ for key, video_ids in split.items():
         for video_id in video_ids:
             path = videos[video_id]
             rel_path = path.relative_to(opts.data_path)
+            if key == 'test':
+                rel_path = rel_path.with_name(rel_path.name.replace("extract", "sync"))
             out.write(str(rel_path) + "\n")
     print("Wrote video list for ", key)
 
@@ -84,6 +86,9 @@ for key, video_ids in split.items():
         for video_id in video_ids:
             path = videos[video_id]
             rel_path = path.relative_to(opts.data_path)
+            if key == 'test':
+                rel_path = rel_path.with_name(rel_path.name.replace("extract", "sync"))
+                path = Path('./kitti_data') / rel_path
             path_to_data = path / "image_00" / "data"
             file_ids = [int(file.stem) for file in path_to_data.glob(f"*.{extension}")]
             file_ids = sorted(file_ids)

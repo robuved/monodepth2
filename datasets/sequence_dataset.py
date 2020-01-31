@@ -15,7 +15,8 @@ from torch.utils.data import DataLoader
 
 
 class SequenceRawKittiDataset(data.IterableDataset):
-    def __init__(self, data_path, video_paths, filenames, batch_size, img_ext, frame_idxs, shuffle=True, **kittirawdsargs):
+    def __init__(self, data_path, video_paths, filenames, batch_size, img_ext, 
+        frame_idxs, imu_data_path=None, shuffle=True, **kittirawdsargs):
         super().__init__()
         self.video_paths = video_paths
         self.batch_size = batch_size
@@ -28,8 +29,7 @@ class SequenceRawKittiDataset(data.IterableDataset):
             for fname in filenames:
                 if fname.startswith(path):
                     video_filenames.append(fname)
-
-            self.video_ds[path] = KITTIRAWDataset(data_path, video_filenames, frame_idxs=frame_idxs, img_ext=img_ext, **kittirawdsargs)
+            self.video_ds[path] = KITTIRAWDataset(data_path, video_filenames, imu_data_path=imu_data_path, frame_idxs=frame_idxs, img_ext=img_ext, **kittirawdsargs)
 
     def __iter__(self):
         if self.shuffle:

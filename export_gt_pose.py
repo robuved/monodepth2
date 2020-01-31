@@ -15,7 +15,7 @@ import PIL.Image as pil
 from utils import readlines
 from kitti_utils import generate_depth_map
 from other_kitti_utils import load_oxts_packets_and_poses
-
+from pathlib import Path
 # Source: https://github.com/utiasSTARS/pykitti
 
 def export_gt_poses_kitti():
@@ -41,21 +41,18 @@ def export_gt_poses_kitti():
 
     for video in videos:
         oxts_paths = []
-        for file in files:
-            if file.startswith(video):
-                folder, frame_id, _ = file.split()
-                frame_id = int(frame_id)
+        ids = sorted([int(file.stem) for file in Path(opt.data_path).glob(f"{video}/oxts/data/*.txt")])
+        for frame_id in ids:
+            filepath_oxst = os.path.join(opt.data_path, video,
+                                         "oxts", "data", "{:010d}.txt".format(frame_id))
 
-                filepath_oxst = os.path.join(opt.data_path, folder,
-                                             "oxts", "data", "{:010d}.txt".format(frame_id))
-
-                oxts_paths.append(filepath_oxst)
+            oxts_paths.append(filepath_oxst)
         oxts = load_oxts_packets_and_poses(oxts_paths)
         poses_path = os.path.join(opt.data_path, video,
                                  "oxts", "poses.txt")
-        poses = np.array([o[1] for o in oxts])
+        poses = np.stack([np.array(o[1]) for o in oxts])
         print("Saving to {}".format(poses_path))
-
+        poses = poses[:, :3, :].reshape(-1, 12)
         np.savetxt(poses_path, poses)
 
 if __name__ == "__main__":

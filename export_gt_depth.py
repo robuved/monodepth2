@@ -39,7 +39,7 @@ def export_gt_depths_kitti():
     print("Exporting ground truth depths for {}".format(opt.split))
 
     gt_depths = []
-    updated = []
+    # updated = []
     for line in lines:
 
         folder, frame_id, _ = line.split()
@@ -49,17 +49,15 @@ def export_gt_depths_kitti():
             calib_dir = os.path.join(opt.data_path, folder.split("/")[0])
             velo_filename = os.path.join(opt.data_path, folder,
                                          "velodyne_points/data", "{:010d}.bin".format(frame_id))
-            if Path(velo_filename).exists():
-                gt_depth = generate_depth_map(calib_dir, velo_filename, 2, True)
-            else:
-                continue
+            # if Path(velo_filename).exists():
+            gt_depth = generate_depth_map(calib_dir, velo_filename, 2, True)
         elif opt.split == "eigen_benchmark":
             gt_depth_path = os.path.join(opt.data_path, folder, "proj_depth",
                                          "groundtruth", "image_02", "{:010d}.png".format(frame_id))
             gt_depth = np.array(pil.open(gt_depth_path)).astype(np.float32) / 256
 
         gt_depths.append(gt_depth.astype(np.float32))
-        updated.append(line)
+        # updated.append(line)
 
     output_path = os.path.join(split_folder, "gt_depths.npz")
 
@@ -67,10 +65,10 @@ def export_gt_depths_kitti():
 
     np.savez_compressed(output_path, data=np.array(gt_depths))
 
-    updated_file_path = Path(test_files_path).with_name("test_files_updated.txt")
-    with open(updated_file_path, "w") as out:
-        for line in updated_file_path:
-            out.write(line + "\n")
+    # updated_file_path = Path(test_files_path).with_name("test_files_updated.txt")
+    # with open(updated_file_path, "w") as out:
+    #     for line in updated:
+    #         out.write(line + "\n")
 
 
 if __name__ == "__main__":

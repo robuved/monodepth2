@@ -74,15 +74,18 @@ class KITTIRAWDataset(KITTIDataset):
         return self.timestamp_file_contents[timestamp_path][1][frame_index]
 
     def get_imu_measurements(self, folder, start, end):
+        if "unsynced" in self.imu_data_path:
+            folder = folder.replace("sync", "extract")
+
         timestamp_path = os.path.join(
-            self.data_path, folder, "oxts", "timestamps.txt")
+            self.imu_data_path, folder, "oxts", "timestamps.txt")
         if timestamp_path not in self.timestamp_file_contents:
             self.timestamp_file_contents[timestamp_path] = get_timestamps(timestamp_path)
         unique_indexes, timestamps = self.timestamp_file_contents[timestamp_path]
         timestamps = timestamps[unique_indexes]
 
         imu_data_path = os.path.join(
-            self.data_path, folder, "oxts", "data")
+            self.imu_data_path, folder, "oxts", "data")
         if imu_data_path not in self.imu_contents:
             acc, gyro = get_imu_data(imu_data_path)
             self.imu_contents[imu_data_path] = (torch.tensor(acc), torch.tensor(gyro))

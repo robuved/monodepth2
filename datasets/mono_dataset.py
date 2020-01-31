@@ -45,6 +45,7 @@ class MonoDataset(data.Dataset):
                  width,
                  frame_idxs,
                  num_scales,
+                 imu_data_path=None,
                  is_train=False,
                  img_ext='.jpg',
                  use_imu=True):
@@ -65,7 +66,7 @@ class MonoDataset(data.Dataset):
 
         self.loader = pil_loader
         self.to_tensor = transforms.ToTensor()
-
+        self.imu_data_path = imu_data_path if imu_data_path else data_path
         # We need to specify augmentations differently in newer versions of torchvision.
         # We first try the newer tuple version; if this fails we fall back to scalars
         try:
